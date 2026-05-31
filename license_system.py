@@ -83,6 +83,17 @@ def get_hwid() -> str:
     return '-'.join(digest[i:i+4] for i in range(0, 16, 4))
 
 
+# ── String sanitization ─────────────────────────────────────────────────────
+def _clean_str(s: str) -> str:
+    """Removes invisible unicode characters (like LTR/RTL marks) and normalizes dashes."""
+    if not s: return ""
+    import re
+    # Replace common dash variants with standard hyphen
+    s = s.replace("–", "-").replace("—", "-").replace("−", "-")
+    # Remove everything except A-Z, 0-9, and hyphens
+    return re.sub(r'[^A-Z0-9\-]', '', s.upper())
+
+
 # ── Internal signing ────────────────────────────────────────────────────────
 def _raw_sign(hwid: str, start: str, expiry: str) -> str:
     """Returns 10-char uppercase hex HMAC signature."""
@@ -100,6 +111,7 @@ def generate_license(hwid: str, plan: str) -> tuple[str, str, str]:
       - 8-char start date  (YYYYMMDD) — NOT-BEFORE date
       - 8-char expiry date (YYYYMMDD)
     """
+    hwid = _clean_str(hwid)
     days  = PLANS.get(plan)
     today = date.today()
 
@@ -125,7 +137,8 @@ def verify_license_key(hwid: str, key: str) -> tuple[bool, str, str]:
     Returns (is_valid, start_str, expiry_str).
     start_str and expiry_str are "" if invalid.
     """
-    clean = key.upper().replace(" ", "")
+    hwid = _clean_str(hwid)
+    clean = _clean_str(key)
     parts = clean.split("-")
 
     # Expected 4 parts: 5-5-8-8
