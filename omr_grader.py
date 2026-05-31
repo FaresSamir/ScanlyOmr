@@ -10,7 +10,8 @@ import tempfile
 from datetime import datetime, date
 from license_system import (
     check_license, save_license, load_license,
-    get_hwid, verify_license_key, PLANS, LIFETIME_EXPIRY
+    get_hwid, verify_license_key, PLANS, LIFETIME_EXPIRY,
+    update_last_seen
 )
 
 # ── Base directory (works for both .py and .exe) ────────────────────────────
@@ -2014,6 +2015,7 @@ def main():
         pass
 
     app = OMRApp(root)
+    update_last_seen()   # anchor clock — protects against date rollback
 
     # Show license status in title bar
     if days_left == -1:

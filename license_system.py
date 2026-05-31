@@ -154,7 +154,15 @@ def _license_path() -> str:
 
 
 def save_license(hwid: str, key: str, expiry: str, plan: str) -> None:
-    data = {"h": hwid, "k": key, "e": expiry, "p": plan}
+    now_ts = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+    data = {
+        "h": hwid,
+        "k": key,
+        "e": expiry,
+        "p": plan,
+        "a": now_ts,    # activation timestamp
+        "s": now_ts,    # last-seen timestamp (updated each run)
+    }
     encoded = base64.b64encode(json.dumps(data).encode()).decode()
     with open(_license_path(), 'w') as f:
         f.write(encoded)
@@ -172,6 +180,17 @@ def load_license() -> dict | None:
         return None
 
 
+def update_last_seen() -> None:
+    """Call this every time the app launches successfully. Anchors the clock."""
+    data = load_license()
+    if not data:
+        return
+    data["s"] = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+    encoded = base64.b64encode(json.dumps(data).encode()).decode()
+    with open(_license_path(), 'w') as f:
+        f.write(encoded)
+
+
 # ── Main check (called at startup) ─────────────────────────────────────────
 def check_license() -> tuple[bool, str, int]:
     """
@@ -182,23 +201,37 @@ def check_license() -> tuple[bool, str, int]:
     """
     data = load_license()
     if not data:
-        return False, "لا يوجد ترخيص مفعّل", -1
+        return False, "لا يوجد ترخيص مفعʼل", -1
 
     current_hwid = get_hwid()
     if data.get("h") != current_hwid:
         return False, "الترخيص غير صالح لهذا الجهاز", -1
 
-    hwid  = data["h"]
-    key   = data["k"]
-    plan  = data.get("p", "")
+    hwid = data["h"]
+    key  = data["k"]
+    plan = data.get("p", "")
 
     is_ok, expiry = verify_license_key(hwid, key)
     if not is_ok:
         return False, "كود التفعيل غير صحيح أو تالف", -1
 
+    # ── Clock rollback protection ──────────────────────────────────────────
+    last_seen_str = data.get("s", "")
+    if last_seen_str:
+        try:
+            last_seen = datetime.strptime(last_seen_str, "%Y-%m-%dT%H:%M:%S")
+            now       = datetime.utcnow()
+            # Allow up to 48h tolerance for DST / timezone changes
+            if (last_seen - now).total_seconds() > 48 * 3600:
+                return False, "❌  تم اكتشاف تلاعب بالتاريخ — اتصل بالمطور", -1
+        except ValueError:
+            pass
+
+    # ── Lifetime license ───────────────────────────────────────────────────
     if expiry == LIFETIME_EXPIRY:
         return True, f"✅  ترخيص مدى الحياة  —  {plan}", -1
 
+    # ── Timed license ────────────────────────────────────────────────────
     try:
         expiry_date = datetime.strptime(expiry, "%Y-%m-%d").date()
     except ValueError:
