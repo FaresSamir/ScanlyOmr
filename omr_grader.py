@@ -16,8 +16,10 @@ from license_system import (
 # ── Base directory (works for both .py and .exe) ────────────────────────────
 if getattr(sys, 'frozen', False):
     BASE_DIR = os.path.dirname(sys.executable)
+    ASSET_DIR = getattr(sys, '_MEIPASS', BASE_DIR)
 else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    ASSET_DIR = BASE_DIR
 
 # ===================== OMR CORE =====================
 
@@ -571,7 +573,7 @@ class OMRApp:
 
         # App title
         try:
-            logo_pil = Image.open(os.path.join(BASE_DIR, "Scanly.png"))
+            logo_pil = Image.open(os.path.join(ASSET_DIR, "Scanly.png"))
             logo_pil = logo_pil.resize((28, 28), Image.LANCZOS)
             self._logo_img = ImageTk.PhotoImage(logo_pil)
             self._title_lbl = tk.Label(
