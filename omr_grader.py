@@ -6,6 +6,10 @@ from PIL import Image, ImageTk
 import os
 import json
 import tempfile
+from license_system import (
+    check_license, save_license, load_license,
+    get_hwid, verify_license_key, PLANS, LIFETIME_EXPIRY
+)
 
 # ===================== OMR CORE =====================
 
@@ -1795,14 +1799,255 @@ class OMRApp:
              else f"Results saved:\n{path}"))
 
 
+# ===================== ACTIVATION WINDOW =====================
+
+class ActivationWindow:
+    """
+    Shown at startup when no valid license is found.
+    Blocks the main app until activation succeeds.
+    """
+
+    def __init__(self, root: tk.Tk):
+        self.root   = root
+        self.passed = False
+        self._hwid  = get_hwid()
+
+        root.title("Scanly — تفعيل البرنامج")
+        root.geometry("620x560")
+        root.configure(bg="#0F172A")
+        root.resizable(False, False)
+        root.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        self._build()
+
+    # ------------------------------------------------------------------ build
+    def _build(self):
+        BG      = "#0F172A"
+        SURFACE = "#1E293B"
+        BORDER  = "#334155"
+        PRIMARY = "#3B82F6"
+        SUCCESS = "#10B981"
+        DANGER  = "#EF4444"
+        TEXT    = "#F1F5F9"
+        TEXT2   = "#94A3B8"
+        FONT    = "Dubai"
+
+        def hc(c, f=0.82):
+            r,g,b = int(c[1:3],16), int(c[3:5],16), int(c[5:7],16)
+            return "#{:02x}{:02x}{:02x}".format(int(r*f),int(g*f),int(b*f))
+
+        # Header
+        hdr = tk.Frame(self.root, bg=PRIMARY, height=64)
+        hdr.pack(fill="x")
+        hdr.pack_propagate(False)
+        tk.Label(hdr, text="🔒  Scanly — تفعيل البرنامج",
+                 font=(FONT, 16, "bold"), bg=PRIMARY, fg="white"
+                 ).pack(side="right", padx=20, pady=14)
+
+        body = tk.Frame(self.root, bg=BG)
+        body.pack(fill="both", expand=True, padx=30, pady=20)
+
+        # ── Lock icon / subtitle ──────────────────────────────────────────
+        tk.Label(body, text="🔒",
+                 font=("Segoe UI Emoji", 36),
+                 bg=BG, fg=TEXT).pack(pady=(0, 6))
+        tk.Label(body,
+                 text="البرنامج يحتاج إلى ترخيص لتشغيله",
+                 font=(FONT, 12), bg=BG, fg=TEXT2).pack(pady=(0, 20))
+
+        # ── HWID card ────────────────────────────────────────────────────
+        hwid_card = tk.Frame(body, bg=SURFACE,
+                             highlightthickness=1,
+                             highlightbackground=BORDER)
+        hwid_card.pack(fill="x", pady=(0, 16))
+
+        tk.Label(hwid_card,
+                 text="رقم جهازك (أرسله للبائع للحصول على كود التفعيل)",
+                 font=(FONT, 9), bg=SURFACE, fg=TEXT2,
+                 anchor="e", padx=12, pady=8
+                 ).pack(fill="x")
+
+        hwid_row = tk.Frame(hwid_card, bg=SURFACE)
+        hwid_row.pack(fill="x", padx=12, pady=(4, 10))
+
+        tk.Label(hwid_row, text=self._hwid,
+                 font=(FONT, 14, "bold"),
+                 bg=SURFACE, fg=SUCCESS,
+                 anchor="e").pack(side="right", expand=True)
+
+        copy_btn = tk.Button(hwid_row, text="📋 نسخ",
+                             font=(FONT, 9),
+                             bg="#334155", fg=TEXT2,
+                             activebackground="#475569",
+                             relief="flat", cursor="hand2",
+                             padx=10, pady=4,
+                             command=self._copy_hwid)
+        copy_btn.pack(side="left", padx=(0, 0))
+
+        # ── License key input ─────────────────────────────────────────────
+        tk.Label(body, text="أدخل كود التفعيل:",
+                 font=(FONT, 10, "bold"),
+                 bg=BG, fg=TEXT2, anchor="e"
+                 ).pack(fill="x", pady=(0, 6))
+
+        self.key_var = tk.StringVar()
+        key_frame = tk.Frame(body, bg=SURFACE,
+                             highlightthickness=1,
+                             highlightbackground=BORDER)
+        key_frame.pack(fill="x", pady=(0, 6))
+        key_entry = tk.Entry(key_frame, textvariable=self.key_var,
+                             font=(FONT, 13, "bold"),
+                             bg=SURFACE, fg=TEXT,
+                             insertbackground=TEXT,
+                             relief="flat", bd=0,
+                             justify="center")
+        key_entry.pack(fill="x", ipady=10, padx=10)
+        key_entry.bind("<Return>", lambda e: self._activate())
+
+        # ── Expiry input (hidden until shown) ─────────────────────────────
+        tk.Label(body, text="تاريخ انتهاء الترخيص (كما أُرسل لك):",
+                 font=(FONT, 10, "bold"),
+                 bg=BG, fg=TEXT2, anchor="e"
+                 ).pack(fill="x", pady=(6, 6))
+
+        self.expiry_var = tk.StringVar()
+        expiry_frame = tk.Frame(body, bg=SURFACE,
+                                highlightthickness=1,
+                                highlightbackground=BORDER)
+        expiry_frame.pack(fill="x", pady=(0, 12))
+        tk.Entry(expiry_frame, textvariable=self.expiry_var,
+                 font=(FONT, 11),
+                 bg=SURFACE, fg=TEXT,
+                 insertbackground=TEXT,
+                 relief="flat", bd=0,
+                 justify="center",
+                 ).pack(fill="x", ipady=8, padx=10)
+
+        # Hint
+        tk.Label(body,
+                 text='* لترخيص مدى الحياة اكتب:  9999-12-31',
+                 font=(FONT, 8), bg=BG, fg="#475569", anchor="e"
+                 ).pack(fill="x", pady=(0, 4))
+
+        # ── Status ────────────────────────────────────────────────────────
+        self.status_var = tk.StringVar(value="")
+        self.status_lbl = tk.Label(body, textvariable=self.status_var,
+                                   font=(FONT, 10, "bold"),
+                                   bg=BG, fg=DANGER,
+                                   anchor="center")
+        self.status_lbl.pack(fill="x", pady=(0, 10))
+
+        # ── Activate button ───────────────────────────────────────────────
+        act_btn = tk.Button(body,
+                            text="⚡  تفعيل البرنامج",
+                            font=(FONT, 13, "bold"),
+                            bg=PRIMARY, fg="white",
+                            activebackground=hc(PRIMARY),
+                            relief="flat", cursor="hand2",
+                            padx=20, pady=12,
+                            command=self._activate)
+        act_btn.pack(fill="x")
+        act_btn.bind("<Enter>", lambda e: act_btn.config(bg=hc(PRIMARY)))
+        act_btn.bind("<Leave>", lambda e: act_btn.config(bg=PRIMARY))
+
+        # ── Contact ───────────────────────────────────────────────────────
+        tk.Label(body, text="للحصول على كود التفعيل تواصل مع المطور",
+                 font=(FONT, 8), bg=BG, fg="#334155",
+                 anchor="center").pack(fill="x", pady=(14, 0))
+
+    # ---------------------------------------------------------------- actions
+    def _copy_hwid(self):
+        self.root.clipboard_clear()
+        self.root.clipboard_append(self._hwid)
+        messagebox.showinfo("✅", "تم نسخ رقم الجهاز!")
+
+    def _activate(self):
+        key    = self.key_var.get().strip().upper()
+        expiry = self.expiry_var.get().strip()
+
+        if not key:
+            self.status_var.set("❌  أدخل كود التفعيل")
+            return
+        if not expiry:
+            self.status_var.set("❌  أدخل تاريخ الانتهاء")
+            return
+
+        # Validate date format
+        import re
+        if not re.match(r'^\d{4}-\d{2}-\d{2}$', expiry):
+            self.status_var.set("❌  صيغة التاريخ غير صحيحة (YYYY-MM-DD)")
+            return
+
+        if not verify_license_key(self._hwid, key, expiry):
+            self.status_var.set("❌  كود التفعيل غير صحيح")
+            return
+
+        # Determine plan name from expiry
+        if expiry == LIFETIME_EXPIRY:
+            plan = "مدى الحياة"
+        else:
+            from datetime import datetime, date
+            try:
+                exp_date = datetime.strptime(expiry, "%Y-%m-%d").date()
+                days = (exp_date - date.today()).days
+                if days <= 32:   plan = "شهر"
+                elif days <= 95: plan = "٣ شهور"
+                elif days <= 185: plan = "٦ شهور"
+                else:             plan = "سنة"
+            except Exception:
+                plan = "مخصص"
+
+        save_license(self._hwid, key, expiry, plan)
+        self.passed = True
+        self.root.destroy()
+
+    def _on_close(self):
+        if not self.passed:
+            self.root.destroy()
+            import sys; sys.exit(0)
+
+
+# ===================== MAIN =====================
+
 def main():
+    # ── 1) Check existing license ─────────────────────────────────────────
+    is_valid, msg, days_left = check_license()
+
+    if not is_valid:
+        # Show activation window
+        act_root = tk.Tk()
+        try:
+            act_root.tk.call('tk', 'scaling', 1.2)
+        except Exception:
+            pass
+        act_win = ActivationWindow(act_root)
+        act_root.mainloop()
+
+        if not act_win.passed:
+            return   # User closed without activating
+
+        # Re-check after activation
+        is_valid, msg, days_left = check_license()
+        if not is_valid:
+            messagebox.showerror("❌ خطأ", "فشل التفعيل. تحقق من الكود وأعد المحاولة.")
+            return
+
+    # ── 2) Launch main app ────────────────────────────────────────────────
     root = tk.Tk()
     root.resizable(True, True)
     try:
         root.tk.call('tk', 'scaling', 1.2)
-    except:
+    except Exception:
         pass
+
     app = OMRApp(root)
+
+    # Show license status in title bar
+    if days_left == -1:
+        root.title(T("app_title") + "  —  ✅ مدى الحياة")
+    elif days_left > 0:
+        root.title(T("app_title") + f"  —  ⏳ {days_left} يوم متبقي")
+
     root.mainloop()
 
 
