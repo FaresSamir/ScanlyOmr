@@ -189,12 +189,12 @@ class GeneratorApp:
             return
         plan = self.plan_var.get()
         try:
-            key, expiry = generate_license(hwid, plan)
+            key, start, expiry = generate_license(hwid, plan)
             self.result_var.set(key)
             if expiry == "9999-12-31":
                 self.expiry_var.set(f"النوع: {plan}  |  صالح مدى الحياة")
             else:
-                self.expiry_var.set(f"النوع: {plan}  |  ينتهي في: {expiry}")
+                self.expiry_var.set(f"النوع: {plan}  |  يبدأ من: {start}  |  ينتهي في: {expiry}")
         except Exception as ex:
             messagebox.showerror("خطأ في التوليد", str(ex))
 

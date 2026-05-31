@@ -10,8 +10,7 @@ import tempfile
 from datetime import datetime, date
 from license_system import (
     check_license, save_license, load_license,
-    get_hwid, verify_license_key, PLANS, LIFETIME_EXPIRY,
-    update_last_seen
+    get_hwid, verify_license_key, PLANS, LIFETIME_EXPIRY
 )
 
 # ── Base directory (works for both .py and .exe) ────────────────────────────
@@ -1952,7 +1951,7 @@ class ActivationWindow:
             self.status_var.set("❌  أدخل كود التفعيل")
             return
 
-        is_ok, expiry = verify_license_key(self._hwid, key)
+        is_ok, start, expiry = verify_license_key(self._hwid, key)
         if not is_ok:
             self.status_var.set("❌  كود التفعيل غير صحيح")
             return
@@ -1971,7 +1970,7 @@ class ActivationWindow:
             except Exception:
                 plan = "مخصص"
 
-        save_license(self._hwid, key, expiry, plan)
+        save_license(self._hwid, key, start, expiry, plan)
         self.passed = True
         self.root.destroy()
 
@@ -2015,7 +2014,6 @@ def main():
         pass
 
     app = OMRApp(root)
-    update_last_seen()   # anchor clock — protects against date rollback
 
     # Show license status in title bar
     if days_left == -1:
