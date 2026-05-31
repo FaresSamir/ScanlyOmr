@@ -6,6 +6,7 @@ from PIL import Image, ImageTk
 import os
 import json
 import tempfile
+from datetime import datetime, date
 from license_system import (
     check_license, save_license, load_license,
     get_hwid, verify_license_key, PLANS, LIFETIME_EXPIRY
@@ -1904,31 +1905,6 @@ class ActivationWindow:
         key_entry.pack(fill="x", ipady=10, padx=10)
         key_entry.bind("<Return>", lambda e: self._activate())
 
-        # ── Expiry input (hidden until shown) ─────────────────────────────
-        tk.Label(body, text="تاريخ انتهاء الترخيص (كما أُرسل لك):",
-                 font=(FONT, 10, "bold"),
-                 bg=BG, fg=TEXT2, anchor="e"
-                 ).pack(fill="x", pady=(6, 6))
-
-        self.expiry_var = tk.StringVar()
-        expiry_frame = tk.Frame(body, bg=SURFACE,
-                                highlightthickness=1,
-                                highlightbackground=BORDER)
-        expiry_frame.pack(fill="x", pady=(0, 12))
-        tk.Entry(expiry_frame, textvariable=self.expiry_var,
-                 font=(FONT, 11),
-                 bg=SURFACE, fg=TEXT,
-                 insertbackground=TEXT,
-                 relief="flat", bd=0,
-                 justify="center",
-                 ).pack(fill="x", ipady=8, padx=10)
-
-        # Hint
-        tk.Label(body,
-                 text='* لترخيص مدى الحياة اكتب:  9999-12-31',
-                 font=(FONT, 8), bg=BG, fg="#475569", anchor="e"
-                 ).pack(fill="x", pady=(0, 4))
-
         # ── Status ────────────────────────────────────────────────────────
         self.status_var = tk.StringVar(value="")
         self.status_lbl = tk.Label(body, textvariable=self.status_var,
@@ -1962,36 +1938,26 @@ class ActivationWindow:
         messagebox.showinfo("✅", "تم نسخ رقم الجهاز!")
 
     def _activate(self):
-        key    = self.key_var.get().strip().upper()
-        expiry = self.expiry_var.get().strip()
+        key = self.key_var.get().strip().upper()
 
         if not key:
             self.status_var.set("❌  أدخل كود التفعيل")
             return
-        if not expiry:
-            self.status_var.set("❌  أدخل تاريخ الانتهاء")
-            return
 
-        # Validate date format
-        import re
-        if not re.match(r'^\d{4}-\d{2}-\d{2}$', expiry):
-            self.status_var.set("❌  صيغة التاريخ غير صحيحة (YYYY-MM-DD)")
-            return
-
-        if not verify_license_key(self._hwid, key, expiry):
+        is_ok, expiry = verify_license_key(self._hwid, key)
+        if not is_ok:
             self.status_var.set("❌  كود التفعيل غير صحيح")
             return
 
-        # Determine plan name from expiry
+        # Determine plan name from embedded expiry
         if expiry == LIFETIME_EXPIRY:
             plan = "مدى الحياة"
         else:
-            from datetime import datetime, date
             try:
                 exp_date = datetime.strptime(expiry, "%Y-%m-%d").date()
                 days = (exp_date - date.today()).days
-                if days <= 32:   plan = "شهر"
-                elif days <= 95: plan = "٣ شهور"
+                if days <= 32:    plan = "شهر"
+                elif days <= 95:  plan = "٣ شهور"
                 elif days <= 185: plan = "٦ شهور"
                 else:             plan = "سنة"
             except Exception:

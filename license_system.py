@@ -2,6 +2,10 @@
 Scanly License System - Core Module
 ====================================
 Shared between omr_grader.py and license_generator.py
+
+Key format:  XXXXX-XXXXX-XXXXX-YYYYMMDD
+             └─ 15-char HMAC sig ─┘ └─ date ─┘
+The expiry date is embedded inside the key — no separate date input needed.
 """
 
 import hashlib
@@ -11,7 +15,7 @@ import json
 import os
 import base64
 import subprocess
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 # ── Secret Key (obfuscated as byte array) ──────────────────────────────────
 # "Sc@nly#2025!P$r0Key&Secure_Omar"
@@ -71,36 +75,71 @@ def get_hwid() -> str:
     except Exception:
         pass
 
-    raw   = "|".join(parts)
+    raw    = "|".join(parts)
     digest = hashlib.sha256(raw.encode()).hexdigest()[:16].upper()
     return '-'.join(digest[i:i+4] for i in range(0, 16, 4))
 
 
-# ── License generation & verification ──────────────────────────────────────
-def _sign(hwid: str, expiry: str) -> str:
+# ── Internal signing ────────────────────────────────────────────────────────
+def _raw_sign(hwid: str, expiry: str) -> str:
+    """Returns 15-char uppercase hex HMAC signature."""
     msg = f"{hwid}|{expiry}".encode()
-    sig = hmac.new(_SECRET, msg, hashlib.sha256).hexdigest()[:20].upper()
-    return '-'.join(sig[i:i+5] for i in range(0, 20, 5))
+    return hmac.new(_SECRET, msg, hashlib.sha256).hexdigest()[:15].upper()
 
 
+# ── License generation ──────────────────────────────────────────────────────
 def generate_license(hwid: str, plan: str) -> tuple[str, str]:
     """
-    Returns (license_key, expiry_date_str)
-    plan: one of PLANS keys
+    Returns (license_key, expiry_date_str).
+    The expiry date is embedded inside the key — format:
+        XXXXX-XXXXX-XXXXX-YYYYMMDD
     """
     days = PLANS.get(plan)
     if days is None:
         expiry = LIFETIME_EXPIRY
     else:
-        from datetime import timedelta
         expiry = (date.today() + timedelta(days=days)).strftime("%Y-%m-%d")
-    key = _sign(hwid, expiry)
+
+    sig      = _raw_sign(hwid, expiry)           # 15 chars
+    date_enc = expiry.replace("-", "")            # "99991231" or "20251231"
+    key = f"{sig[:5]}-{sig[5:10]}-{sig[10:15]}-{date_enc}"
     return key, expiry
 
 
-def verify_license_key(hwid: str, key: str, expiry: str) -> bool:
-    expected = _sign(hwid, expiry)
-    return key.upper().replace('-', '') == expected.replace('-', '')
+# ── License verification ────────────────────────────────────────────────────
+def verify_license_key(hwid: str, key: str) -> tuple[bool, str]:
+    """
+    Verify a license key.
+    Returns (is_valid, expiry_str).
+    expiry_str is "" if invalid.
+    """
+    clean = key.upper().replace(" ", "")
+    parts = clean.split("-")
+
+    # Expected: 4 parts → 5-5-5-8
+    if len(parts) != 4:
+        return False, ""
+
+    sig_provided = "".join(parts[:3])   # 15 chars
+    date_enc     = parts[3]             # 8 chars YYYYMMDD
+
+    if len(sig_provided) != 15 or len(date_enc) != 8:
+        return False, ""
+
+    # Parse expiry
+    try:
+        expiry = f"{date_enc[:4]}-{date_enc[4:6]}-{date_enc[6:8]}"
+        # Validate it's a real date (or lifetime)
+        if expiry != LIFETIME_EXPIRY:
+            datetime.strptime(expiry, "%Y-%m-%d")
+    except ValueError:
+        return False, ""
+
+    expected_sig = _raw_sign(hwid, expiry)
+    if sig_provided != expected_sig:
+        return False, ""
+
+    return True, expiry
 
 
 # ── Persistence ────────────────────────────────────────────────────────────
@@ -149,12 +188,12 @@ def check_license() -> tuple[bool, str, int]:
     if data.get("h") != current_hwid:
         return False, "الترخيص غير صالح لهذا الجهاز", -1
 
-    hwid   = data["h"]
-    key    = data["k"]
-    expiry = data["e"]
-    plan   = data.get("p", "")
+    hwid  = data["h"]
+    key   = data["k"]
+    plan  = data.get("p", "")
 
-    if not verify_license_key(hwid, key, expiry):
+    is_ok, expiry = verify_license_key(hwid, key)
+    if not is_ok:
         return False, "كود التفعيل غير صحيح أو تالف", -1
 
     if expiry == LIFETIME_EXPIRY:
