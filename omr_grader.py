@@ -1824,7 +1824,7 @@ class ActivationWindow:
 
         root.title("Scanly — تفعيل البرنامج")
         root.geometry("620x560")
-        root.configure(bg="#0F172A")
+        root.configure(bg="#F8FAFC")
         root.resizable(False, False)
         root.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -1832,14 +1832,14 @@ class ActivationWindow:
 
     # ------------------------------------------------------------------ build
     def _build(self):
-        BG      = "#0F172A"
-        SURFACE = "#1E293B"
-        BORDER  = "#334155"
-        PRIMARY = "#3B82F6"
+        BG      = "#F8FAFC"
+        SURFACE = "#FFFFFF"
+        BORDER  = "#E2E8F0"
+        PRIMARY = "#4D4D4D"
         SUCCESS = "#10B981"
         DANGER  = "#EF4444"
-        TEXT    = "#F1F5F9"
-        TEXT2   = "#94A3B8"
+        TEXT    = "#0F172A"
+        TEXT2   = "#475569"
         FONT    = "Dubai"
 
         def hc(c, f=0.82):
@@ -1887,8 +1887,8 @@ class ActivationWindow:
 
         copy_btn = tk.Button(hwid_row, text="📋 نسخ",
                              font=(FONT, 9),
-                             bg="#334155", fg=TEXT2,
-                             activebackground="#475569",
+                             bg="#E2E8F0", fg=TEXT2,
+                             activebackground="#CBD5E1",
                              relief="flat", cursor="hand2",
                              padx=10, pady=4,
                              command=self._copy_hwid)
@@ -1937,7 +1937,7 @@ class ActivationWindow:
 
         # ── Contact ───────────────────────────────────────────────────────
         tk.Label(body, text="للحصول على كود التفعيل تواصل مع المطور",
-                 font=(FONT, 8), bg=BG, fg="#334155",
+                 font=(FONT, 8), bg=BG, fg=TEXT2,
                  anchor="center").pack(fill="x", pady=(14, 0))
 
     # ---------------------------------------------------------------- actions
