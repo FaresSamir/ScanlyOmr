@@ -1,6 +1,0 @@
-@echo off
-echo جارٍ تثبيت المتطلبات...
-pip install opencv-python numpy Pillow pytwain pywin32 -q
-echo جارٍ التشغيل...
-python omr_grader.py
-pause
