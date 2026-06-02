@@ -210,6 +210,10 @@ TRANSLATIONS = {
     # Complex templates
     "تم سحب {pages} ورقة من الفيدر.\nسيُستخدم أول صفحة فقط كمفتاح إجابة.": "Pulled {pages} sheets from feeder.\nOnly the first page will be used as the answer key.",
     "إجمالي: {total} ورقة  |  متوسط: {avg:.1f}/{n}  |  أعلى: {max_score}  |  أدنى: {min_score}": "Total: {total} sheets  |  Average: {avg:.1f}/{n}  |  Max: {max_score}  |  Min: {min_score}",
+    # Auto-save annotated images
+    "💾 حفظ صور التصحيح": "💾 Save Graded Images",
+    "📁 اختر مجلد الحفظ": "📁 Choose Save Folder",
+    "لم يُختر مجلد": "No folder selected",
 }
 
 def T(key):
@@ -476,9 +480,12 @@ def _read_student_id_a5(gray, xs=None, ys=None):
     """
     يقرأ رقم الطالب من شبكة فقاعات الكود لورقة A5.
     4 خانات (أعمدة) × 10 أرقام (صفوف 0-9)
+    إذا لم يُملأ عمود (لا توجد فقاعة مُظّللة)، يتم اعتباره 0.
     """
-    if xs is None: xs = A5_ID_XS
-    if ys is None: ys = A5_ID_YS
+    if xs is None:
+        xs = A5_ID_XS
+    if ys is None:
+        ys = A5_ID_YS
     digits = []
     for cx in xs:
         bubble_vals = {}
@@ -491,12 +498,15 @@ def _read_student_id_a5(gray, xs=None, ys=None):
             gap = row_mean - val
             if gap >= ADAPTIVE_GAP_THRESHOLD and val <= ABSOLUTE_MAX_FILLED:
                 filled.append(digit)
-
-        if len(filled) == 1:
+        # إذا وُجدت فقاعات متعددة => غير واضح -> "?"
+        if len(filled) > 1:
+            digits.append("?")
+        elif len(filled) == 1:
             digits.append(str(filled[0]))
         else:
-            digits.append("?")
-
+            # لا توجد علامة؛ افترض الصفر للعمود
+            digits.append("0")
+    # إذا أي عمود غير واضح ("?"), إرجاع None
     if "?" in digits:
         return None
     return int("".join(digits))
@@ -1250,6 +1260,9 @@ class OMRApp:
         self.scan_counter = 0
         # نوع ورقة الإجابة: "A5" = الديزاين الحالي (81 س) | "A6" = الجديد (A4 ÷ 4، 30 س)
         self.sheet_type = tk.StringVar(value="A5")
+        # Auto-save annotated images
+        self.auto_save_var = tk.BooleanVar(value=False)
+        self.save_folder = None
 
         self._load_key_from_file()
         self._build_ui()
@@ -1367,6 +1380,36 @@ class OMRApp:
                   bg="#4D4D4D", fg="#FFFFFF",
                   relief="flat", padx=10, pady=5,
                   command=self._calibrate_detection).pack(fill="x", padx=10, pady=(0,8))
+
+        # ── Auto-save section ────────────────────────────────────────
+        tk.Frame(scan_card, bg="#E2E8F0", height=1).pack(fill="x", padx=10, pady=(2, 6))
+
+        tk.Checkbutton(
+            scan_card,
+            text=T("💾 حفظ صور التصحيح"),
+            variable=self.auto_save_var,
+            font=("Dubai", 10, "bold"),
+            bg="#FFFFFF", fg="#0F172A",
+            selectcolor="#4D4D4D",
+            activebackground="#FFFFFF",
+        ).pack(fill="x", padx=10, pady=(0, 3))
+
+        tk.Button(
+            scan_card,
+            text=T("📁 اختر مجلد الحفظ"),
+            font=("Dubai", 10),
+            bg="#2563EB", fg="#FFFFFF",
+            relief="flat", padx=8, pady=5,
+            command=self._pick_save_folder,
+        ).pack(fill="x", padx=10, pady=(0, 3))
+
+        self._save_folder_lbl = tk.Label(
+            scan_card,
+            text=T("لم يُختر مجلد"),
+            font=("Dubai", 8), bg="#FFFFFF", fg="#94A3B8",
+            anchor="e", wraplength=260,
+        )
+        self._save_folder_lbl.pack(fill="x", padx=10, pady=(0, 8))
 
         # Settings card
         card = self._card(parent, T("⚙️  إعدادات الاختبار"))
@@ -2283,10 +2326,16 @@ class OMRApp:
 
     def _process_image(self, path, silent=False):
         n = self.num_questions.get()
+        # تحميل الصورة مرة واحدة حتى نتمكن من الحفظ المُعلَّق بعد التصحيح
+        img_bgr = cv2.imread(path)
+        if img_bgr is None:
+            if not silent:
+                messagebox.showerror(T("خطأ"), T("تعذّر قراءة الورقة — تحقق من الجودة"))
+            return
         if self.sheet_type.get() == "A6":
-            answers, student_id, err = read_bubble_sheet_a6(path, n)
+            answers, student_id, err = read_bubble_sheet_a6(img_bgr, n)
         else:
-            answers, student_id, err = read_bubble_sheet(path, n)
+            answers, student_id, err = read_bubble_sheet(img_bgr, n)
         if err:
             if not silent:
                 messagebox.showerror(T("خطأ"), err)
@@ -2295,6 +2344,10 @@ class OMRApp:
         if student_id is not None:
             display_name = T("طالب {student_id:04d}").format(student_id=student_id)
         self._add_result(display_name, answers, student_id=student_id)
+        # حفظ الصورة المصحَّحة تلقائياً إن كان الخيار مفعَّلاً
+        if self.auto_save_var.get() and self.save_folder:
+            score = self.students_results[-1]["score"]
+            self._annotate_and_save(img_bgr, student_id, score, n)
 
     def _process_image_array(self, img, name, parent=None, silent=False):
         n = self.num_questions.get()
@@ -2311,6 +2364,10 @@ class OMRApp:
         if student_id is not None:
             display_name = T("طالب {student_id:04d}").format(student_id=student_id)
         self._add_result(display_name, answers, student_id=student_id)
+        # حفظ الصورة المصحَّحة تلقائياً إن كان الخيار مفعَّلاً
+        if self.auto_save_var.get() and self.save_folder:
+            score = self.students_results[-1]["score"]
+            self._annotate_and_save(img, student_id, score, n)
         return True
 
     def _add_result(self, name, answers, student_id=None):
@@ -2414,6 +2471,59 @@ class OMRApp:
                 answers_str = ",".join([d["student"] for d in r["details"]])
                 f.write(f"{r['idx']},{r['file']},{student_id_str},{r['score']},{r['pct']}%,{answers_str}\n")
         messagebox.showinfo(T("تم"), T("✅ تم حفظ النتائج:\n{path}").format(path=path))
+
+    def _pick_save_folder(self):
+        """يفتح نافذة اختيار مجلد لحفظ الصور المصحَّحة."""
+        folder = filedialog.askdirectory(title=T("📁 اختر مجلد الحفظ"))
+        if folder:
+            self.save_folder = folder
+            short = folder if len(folder) <= 35 else "..." + folder[-32:]
+            self._save_folder_lbl.config(text=short, fg="#10B981")
+            print(f"[SAVE] Save folder set to: {folder}")
+
+    def _annotate_and_save(self, img_bgr, student_id, score, num_questions):
+        """
+        يرسم الدرجة ورقم الطالب على نسخة من الصورة ويحفظها في مجلد الحفظ.
+        اسم الملف: {student_id:04d}_{score}.png  أو  noID_{timestamp}_{score}.png
+        """
+        if not self.save_folder or not self.auto_save_var.get():
+            return
+        try:
+            out = img_bgr.copy()
+            h, w = out.shape[:2]
+
+            # نص التعليق
+            sid_str = f"{student_id:04d}" if student_id is not None else "----"
+            label = f"ID: {sid_str}   Score: {score}/{num_questions}"
+
+            # شريط داكن في الأعلى
+            bar_h = max(60, h // 14)
+            cv2.rectangle(out, (0, 0), (w, bar_h), (30, 30, 30), -1)
+
+            # كتابة النص
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = bar_h / 42.0
+            thickness = max(2, int(font_scale * 2.2))
+            (tw, th), _ = cv2.getTextSize(label, font, font_scale, thickness)
+            tx = max(10, (w - tw) // 2)
+            ty = th + max(10, (bar_h - th) // 2)
+            # ظل أسود + نص أبيض
+            cv2.putText(out, label, (tx + 2, ty + 2), font, font_scale, (0, 0, 0), thickness + 2, cv2.LINE_AA)
+            cv2.putText(out, label, (tx, ty),         font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+
+            # اسم الملف
+            if student_id is not None:
+                filename = f"{student_id:04d}_{score:02d}.png"
+            else:
+                from datetime import datetime as _dt
+                ts = _dt.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"noID_{ts}_{score:02d}.png"
+
+            save_path = os.path.join(self.save_folder, filename)
+            cv2.imwrite(save_path, out)
+            print(f"[SAVE] Annotated image saved: {save_path}")
+        except Exception as e:
+            print(f"[SAVE] Failed to save annotated image: {e}")
 
 
 
